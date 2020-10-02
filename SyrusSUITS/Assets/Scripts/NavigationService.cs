@@ -7,21 +7,69 @@ using UnityEngine;
 
 public class NavigationService : MonoBehaviour {
 
+    private static NavigationService _Instance;
+    public static NavigationService Instance {
+        get {
+            if (_Instance == null) {
+                _Instance = FindObjectOfType<NavigationService>();
+            }
+            return _Instance;
+        }
+    }
+
+    string path;                    // Directory where the map JSON files are located
+
     public static List<Node> nodeMap = new List<Node>();
+    public static List<Location> locations = new List<Location>();
     public static List<Node> route = new List<Node>();
 
-    // Use this for initialization
-    void Start () {
-        LoadFromJson("/NodeMaps/sampleMap_1.json");
+
+	Vector3 navOrigin;
+	Quaternion navRotation;
+
+	public bool calibrated = false;
+    public string modelName;
+
+    public delegate void MapLoadedEvent();
+    public event MapLoadedEvent MapLoaded;
+
+    void Awake() {
+        _Instance = this;
+    }
+
+	// Use this for initialization
+	void Start () {
+
+        path = Application.streamingAssetsPath + "/NodeMaps/";
+
+        LoadNodeMap("nasa_test.json");
+
+        //LogNodes();
+
+        //updateNodeMapPositions(nodeMap);
 
         route = GetRoute(GetNodeByID(1), GetNodeByID(6));
 
         LogRoute(route);
+	}
+
+    public void updateNodeMapPositions(List<Node> nodeMap)
+    {
+        Vector3 offset = RouteCalibrator.originPosition;
+
+        foreach(Node node in nodeMap)
+        {
+            System.Diagnostics.Debug.Write(offset);
+            node.position = node.position + offset;
+            System.Diagnostics.Debug.Write(node.position);
+        }
     }
-	
-	// Update is called once per frame
-	void Update () {
-		
+
+    public void SetOrigin(Vector3 origin, Quaternion rotation) {
+		navOrigin = origin;
+		navRotation = rotation;
+		calibrated = true;
+		Debug.Log("Nav Origin Set");
 	}
 
     public List<Node> GetRoute(Node source, Node destination)
@@ -35,6 +83,25 @@ public class NavigationService : MonoBehaviour {
     public Node GetNodeByID(int id)
     {
         return nodeMap.Find(x => x.id.Equals(id));
+    }
+
+    public Node getNodeNearUser(Vector3 userPosition)
+    {
+        float minDistance = float.MaxValue;
+        Node nearestNode = new Node();
+        foreach (Node node in nodeMap)
+        {
+            float distance = Mathf.Sqrt(Mathf.Pow(node.position.x - userPosition.x, 2) +
+                                        Mathf.Pow(node.position.y - userPosition.y, 2) +
+                                        Mathf.Pow(node.position.z - userPosition.z, 2));
+
+            if (distance < minDistance)
+            {
+                minDistance = distance;
+                nearestNode = node;
+            }
+        }
+        return nearestNode;
     }
 
     void LogNodes()
@@ -59,20 +126,34 @@ public class NavigationService : MonoBehaviour {
         Debug.Log(output);
     }
 
-    void LoadFromJson(string directory)
+    void LogLocations()
     {
-        string filePath = Application.streamingAssetsPath + directory;
-
-        if (File.Exists(filePath))
+        foreach (Location location in locations)
         {
-            string jsonContent = File.ReadAllText(filePath);
-            NodeMap jsonNodeMap = JsonUtility.FromJson<NodeMap>(jsonContent);
-
-            nodeMap = ConvertedJsonNodeMap(jsonNodeMap);
+            Debug.Log("Name: " + location.name + ", NodeID: " + location.node.id);
         }
-        else
-        {
-            Debug.LogError("Cannot load data from " + filePath);
+    }
+
+    void LoadNodeMap(string fileName) {
+        try{
+            string dir = path + fileName;
+            if (File.Exists(dir))
+            {
+                string jsonContent = File.ReadAllText(dir);
+                NodeMap jsonNodeMap = JsonUtility.FromJson<NodeMap>(jsonContent);
+
+                modelName = jsonNodeMap.modelname;
+                nodeMap = ConvertedJsonNodeMap(jsonNodeMap);
+                locations = ConvertedJsonLocations(jsonNodeMap.locations);
+
+                if (MapLoaded != null) MapLoaded();
+            }
+            else
+            {
+                Debug.LogError("Unable to read " + fileName + " file, at " + dir);
+            }
+        } catch (System.Exception ex) {
+            Debug.Log("Error: LoadNodeMap: " + ex.Message);
         }
     }
 
@@ -94,16 +175,33 @@ public class NavigationService : MonoBehaviour {
         return nodeMap;
     }
 
-    [Serializable]
-    public class NodeMap
+    public List<Location> ConvertedJsonLocations(List<JsonLocation> jsonLocations)
     {
-        public string title;
-        public List<JsonNode> nodes;
+        List<Location> locations = new List<Location>();
+
+        foreach (JsonLocation jsonLocation in jsonLocations)
+        {
+            Location location = new Location();
+
+            location.name = jsonLocation.name;
+            location.node = GetNodeByID(jsonLocation.nodeID);
+
+            locations.Add(location);
+        }
+
+        return locations;
     }
 
     [Serializable]
-    public class JsonNode
-    {
+    public class NodeMap {
+        public string title;
+        public string modelname;
+        public List<JsonNode> nodes;
+        public List<JsonLocation> locations;
+    }
+
+    [Serializable]
+    public class JsonNode {
         public int id;
         public Positition position;
         public List<int> adjacentNodeIDs;
@@ -111,11 +209,15 @@ public class NavigationService : MonoBehaviour {
     }
 
     [Serializable]
-    public class Positition
-    {
+    public class Positition {
         public float x;
         public float y;
         public float z;
     }
 
+    [Serializable]
+    public class JsonLocation {
+        public string name;
+        public int nodeID;
+    }
 }
